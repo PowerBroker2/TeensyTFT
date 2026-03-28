@@ -112,6 +112,23 @@ public:
     void fillRegion(int x, int y, int w, int h, const uint16_t* buf);
 
     /**
+     * @brief Copy a rectangular region from a user buffer into the back buffer.
+     *
+     * Efficiently fills a rectangular area using a DMA-safe buffer.
+     *
+     * @param x Top-left X coordinate in logical screen space
+     * @param y Top-left Y coordinate in logical screen space
+     * @param w Width of the region in pixels
+     * @param h Height of the region in pixels
+     * @param buf Pointer to a buffer of size w*h containing RGB565 pixels
+     * @param mask Pointer to a buffer of size w*h containing mask of which pixels to draw
+     *
+     * @note Partial clipping is automatically handled if the region exceeds screen bounds.
+     * @note Changes are not visible until swap() is called.
+     */
+    void fillRegion(int x, int y, int w, int h, const uint16_t* buf, const bool* mask);
+
+    /**
      * @brief Swap the back buffer to the front and start DMA screen update.
      *
      * This performs a flicker-free buffer swap. Waits for any ongoing

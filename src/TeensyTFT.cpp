@@ -47,19 +47,73 @@ void TeensyTFT::clear(uint16_t color)
 
 void TeensyTFT::pixel(int x,int y,uint16_t color)
 {
-    if(x<0||x>=_width||y<0||y>=_height) return;
-    back[y*PHYS_WIDTH + x] = color; // always use physical stride
+    if((x < 0) || (x >= _width) || (y < 0) || (y >= _height))
+        return;
+    
+    back[(y * PHYS_WIDTH) + x] = color; // always use physical stride
 }
 
-void TeensyTFT::fillRegion(int x,int y,int w,int h,const uint16_t* buf)
+void TeensyTFT::fillRegion(int x,
+                           int y,
+                           int w,
+                           int h,
+                           const uint16_t* buf)
 {
-    if(!buf) return;
-    for(int row=0; row<h; row++)
+    if(!buf)
+        return;
+    
+    for(int row = 0; row < h; row++)
     {
         int destY = y + row;
-        if(destY<0 || destY>=_height) continue;
 
-        memcpy(back + destY*PHYS_WIDTH + x, buf + row*w, w*sizeof(uint16_t));
+        if((destY < 0) || (destY >= _height))
+            continue;
+
+        memcpy(back + (destY * PHYS_WIDTH) + x,
+               buf + (row * w),
+               w * sizeof(uint16_t));
+    }
+}
+
+void TeensyTFT::fillRegion(int x,
+                           int y,
+                           int w,
+                           int h,
+                           const uint16_t* buf,
+                           const bool*     mask)
+{
+    if(!buf)
+        return;
+    
+    for(int row = 0; row < h; row++)
+    {
+        int destY = y + row;
+
+        if (destY < 0)
+            continue;
+        
+        if (destY >= _height)
+            return;
+        
+        for(int col = 0; col < w; col++)
+        {
+            int destX = x + col;
+            int i     = row*w + col;
+
+            if (destX < 0)
+                continue;
+            
+            if (destX >= _width)
+                break;
+
+            if (mask)
+            {
+                if (!mask[i])
+                    continue;
+            }
+
+            back[destY*_width + destX] = buf[i];
+        }
     }
 }
 
