@@ -108,9 +108,9 @@ public:
      * @param w Width of the region.
      * @param h Height of the region.
      * @param pixels Pointer to the array of 16-bit RGB565 color data.
-     * @param mask Pointer to an optional transparency mask (0 = skip pixel).
+     * @param mask Pointer to an optional transparency mask of which pixels to draw.
      */
-    void fillRegion(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* pixels, const uint8_t* mask = nullptr);
+    void fillRegion(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* pixels, const bool* mask = nullptr);
 
     /**
      * @brief Returns the width of the display in pixels.

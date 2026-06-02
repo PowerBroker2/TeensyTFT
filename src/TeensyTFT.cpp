@@ -108,7 +108,7 @@ void TeensyTFT::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t co
     }
 }
 
-void TeensyTFT::fillRegion(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* pixels, const uint8_t* mask)
+void TeensyTFT::fillRegion(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* pixels, const bool* mask)
 {
     int idx = 0;
 
@@ -120,7 +120,7 @@ void TeensyTFT::fillRegion(int16_t x, int16_t y, int16_t w, int16_t h, const uin
             {
                 if (col >= 0 && col < _width)
                 {
-                    if (mask == nullptr || mask[idx] != 0)
+                    if (mask == nullptr || mask[idx] == true)
                     {
                         _frameBuffer[col + (_width * row)] = pixels[idx];
                     }
