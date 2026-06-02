@@ -1,166 +1,158 @@
 #pragma once
 #include <Arduino.h>
-#include <ILI9341_t3n.h>
+#include <SPI.h>
+#include <ILI9341_T4.h>
 
 /**
- * @brief TeensyTFT class for Teensy 4.x using ILI9341_t3n.
- *
- * This class provides a high-performance, double-buffered interface to
- * ILI9341 TFT displays on Teensy 4.x boards. It uses DMA-safe memory
- * for framebuffers to allow asynchronous screen updates.
- *
- * Features include:
- * - Double-buffered drawing for flicker-free animations.
- * - Per-pixel drawing and rectangular region updates.
- * - Automatic handling of logical width/height for different rotations.
- * - Single-instance enforcement due to DMA buffer constraints.
- *
- * @note Only one instance of this class may exist at runtime.
- * @note All drawing operations affect the back buffer; call swap() to display changes.
+ * @class TeensyTFT
+ * @brief Provides a high-performance TFT and Touchscreen interface for Teensy 4.1
  */
-class TeensyTFT {
+class TeensyTFT
+{
+private:
+elapsedMillis _touchIdleTimer; // Tracks time since last touch
+    float _filteredX = 0;
+    float _filteredY = 0;
+    
+    static constexpr int16_t RESET_THRESHOLD_MS = 200; // Reset filter after 200ms
+    static constexpr float   SMOOTHING_FACTOR = 0.2f;
+
+    static constexpr int16_t TOUCH_CAL_MIN            = 200;
+    static constexpr int16_t TOUCH_CAL_MAX            = 3800;
+    static constexpr int16_t TOUCH_PRESSURE_THRESHOLD = 100;
+
+    ILI9341_T4::ILI9341Driver tft;
+
+    static const int16_t _width  = 320;
+    static const int16_t _height = 240;
+
+    int _touchX = 0;
+    int _touchY = 0;
+    int _touchZ = 0;
+
+    uint16_t _frameBuffer[_width * _height];
+
+    inline bool _outOfBounds(int16_t x, int16_t y)
+    {
+        return (x < 0 || x >= _width || y < 0 || y >= _height);
+    }
+
 public:
-    /// Physical display width (pixels)
-    static const int PHYS_WIDTH  = 320;
-    /// Physical display height (pixels)
-    static const int PHYS_HEIGHT = 240;
-
     /**
-     * @brief Construct a new TeensyTFT object.
-     *
-     * Initializes pins for SPI communication with the TFT. Does not
-     * initialize the display; call begin() after construction.
-     *
-     * @param cs  SPI Chip Select pin
-     * @param dc  SPI Data/Command pin
-     * @param rst Optional Reset pin for the display (default = 255 / unused)
-     *
-     * @note Only one instance is allowed. Creating a second instance will halt execution.
+     * @brief Constructs a new TeensyTFT object.
+     * @param cs Physical Chip Select pin for the TFT display.
+     * @param dc Physical Data/Command pin for the TFT display.
+     * @param rst Physical Reset pin for the TFT display (defaults to 255).
+     * @param tcs Physical Chip Select pin for the XPT2046 touch controller (defaults to 8).
+     * @param tirq Physical Interrupt pin for the XPT2046 touch controller (defaults to 2).
      */
-    TeensyTFT(uint8_t cs, uint8_t dc, uint8_t rst = 255);
+    TeensyTFT(uint8_t cs, uint8_t dc, uint8_t rst = 255, uint8_t tcs = 8, uint8_t tirq = 2);
 
     /**
-     * @brief Initialize the display and DMA framebuffers.
-     *
-     * Configures the ILI9341 display, sets rotation, and prepares
-     * DMA-safe framebuffers for double-buffered drawing.
-     *
-     * @param spiSpeed SPI clock speed in Hz (default 80 MHz)
-     * @param rotation Screen rotation (0-3):
-     *   - 0 = Portrait
-     *   - 1 = Landscape
-     *   - 2 = Portrait upside-down
-     *   - 3 = Landscape inverted
-     *
-     * @note Must be called before any drawing operations.
+     * @brief Initializes the driver, configures SPI, and sets up display orientation.
+     * @param spi_clock Target SPI bus speed in Hertz (defaults to 80MHz).
      */
-    void begin(uint32_t spiSpeed = 80000000, uint8_t rotation = 1);
-
+    void begin(uint32_t spi_clock = 80000000);
+    
     /**
-     * @brief Get the logical display width after rotation.
-     *
-     * @return int Logical width (pixels)
-     *
-     * @note May differ from PHYS_WIDTH if rotation is portrait.
+     * @brief Fills the internal frame buffer with a solid color.
+     * @param color 16-bit RGB565 color value (defaults to 0x0000/Black).
      */
-    int width() const { return _width; }
-
+    void clear(uint16_t color = 0x0000);
+    
     /**
-     * @brief Get the logical display height after rotation.
-     *
-     * @return int Logical height (pixels)
-     *
-     * @note May differ from PHYS_HEIGHT if rotation is portrait.
-     */
-    int height() const { return _height; }
-
-    /**
-     * @brief Clear the back buffer with a single color.
-     *
-     * @param color 16-bit RGB565 color to fill the screen with (default = black)
-     *
-     * @note Changes are not visible until swap() is called.
-     */
-    void clear(uint16_t color = ILI9341_BLACK);
-
-    /**
-     * @brief Draw a single pixel to the back buffer.
-     *
-     * @param x Horizontal coordinate (0 to width()-1)
-     * @param y Vertical coordinate (0 to height()-1)
-     * @param color 16-bit RGB565 color
-     *
-     * @note Coordinates outside the logical screen bounds are ignored.
-     * @note Changes are not visible until swap() is called.
-     */
-    void pixel(int x, int y, uint16_t color);
-
-    /**
-     * @brief Copy a rectangular region from a user buffer into the back buffer.
-     *
-     * Efficiently fills a rectangular area using a DMA-safe buffer.
-     *
-     * @param x Top-left X coordinate in logical screen space
-     * @param y Top-left Y coordinate in logical screen space
-     * @param w Width of the region in pixels
-     * @param h Height of the region in pixels
-     * @param buf Pointer to a buffer of size w*h containing RGB565 pixels
-     *
-     * @note Partial clipping is automatically handled if the region exceeds screen bounds.
-     * @note Changes are not visible until swap() is called.
-     */
-    void fillRegion(int x, int y, int w, int h, const uint16_t* buf);
-
-    /**
-     * @brief Copy a rectangular region from a user buffer into the back buffer.
-     *
-     * Efficiently fills a rectangular area using a DMA-safe buffer.
-     *
-     * @param x Top-left X coordinate in logical screen space
-     * @param y Top-left Y coordinate in logical screen space
-     * @param w Width of the region in pixels
-     * @param h Height of the region in pixels
-     * @param buf Pointer to a buffer of size w*h containing RGB565 pixels
-     * @param mask Pointer to a buffer of size w*h containing mask of which pixels to draw
-     *
-     * @note Partial clipping is automatically handled if the region exceeds screen bounds.
-     * @note Changes are not visible until swap() is called.
-     */
-    void fillRegion(int x, int y, int w, int h, const uint16_t* buf, const bool* mask);
-
-    /**
-     * @brief Swap the back buffer to the front and start DMA screen update.
-     *
-     * This performs a flicker-free buffer swap. Waits for any ongoing
-     * DMA transfer to complete before starting a new one.
+     * @brief Pushes the contents of the internal frame buffer to the physical display via DMA.
      */
     void swap();
+    
+    /**
+     * @brief Draws an individual pixel at the specified coordinates.
+     * @param x Horizontal screen position.
+     * @param y Vertical screen position.
+     * @param color 16-bit RGB565 color value.
+     */
+    void drawPixel(int16_t x, int16_t y, uint16_t color);
+    
+    /**
+     * @brief Draws a horizontal line of a specified width.
+     * @param x Starting horizontal position.
+     * @param y Vertical position.
+     * @param w Width of the line in pixels.
+     * @param color 16-bit RGB565 color value.
+     */
+    void drawHLine(int16_t x, int16_t y, int16_t w, uint16_t color);
+    
+    /**
+     * @brief Draws a vertical line of a specified height.
+     * @param x Horizontal position.
+     * @param y Starting vertical position.
+     * @param h Height of the line in pixels.
+     * @param color 16-bit RGB565 color value.
+     */
+    void drawVLine(int16_t x, int16_t y, int16_t h, uint16_t color);
+    
+    /**
+     * @brief Draws a filled rectangle at the specified coordinates and dimensions.
+     * @param x Starting horizontal position.
+     * @param y Starting vertical position.
+     * @param w Width of the rectangle.
+     * @param h Height of the rectangle.
+     * @param color 16-bit RGB565 color value.
+     */
+    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
+    
+    /**
+     * @brief Copies an array of pixel data into a defined rectangular region.
+     * @param x Starting horizontal position.
+     * @param y Starting vertical position.
+     * @param w Width of the region.
+     * @param h Height of the region.
+     * @param pixels Pointer to the array of 16-bit RGB565 color data.
+     * @param mask Pointer to an optional transparency mask (0 = skip pixel).
+     */
+    void fillRegion(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* pixels, const uint8_t* mask = nullptr);
 
     /**
-     * @brief Get direct access to the back buffer.
-     *
-     * Allows the user to draw directly to the back buffer for custom graphics.
-     * Must call swap() to make changes visible on the screen.
-     *
-     * @return uint16_t* Pointer to back buffer (size PHYS_WIDTH*PHYS_HEIGHT)
+     * @brief Returns the width of the display in pixels.
+     * @return Screen width (int16_t).
      */
-    uint16_t* buffer() { return back; }
+    int16_t width()  { return _width; }
+    
+    /**
+     * @brief Returns the height of the display in pixels.
+     * @return Screen height (int16_t).
+     */
+    int16_t height() { return _height; }
 
-private:
-    uint8_t csPin; ///< SPI Chip Select pin
-    uint8_t dcPin; ///< SPI Data/Command pin
-    uint8_t rstPin; ///< Optional Reset pin
-
-    ILI9341_t3n tft; ///< Internal ILI9341 object (required as object for DMA)
-
-    static DMAMEM uint16_t fbA[PHYS_WIDTH*PHYS_HEIGHT]; ///< Front framebuffer (DMA-safe)
-    static DMAMEM uint16_t fbB[PHYS_WIDTH*PHYS_HEIGHT]; ///< Back framebuffer (DMA-safe)
-
-    uint16_t* front; ///< Pointer to current front buffer
-    uint16_t* back;  ///< Pointer to current back buffer
-
-    int _width;  ///< Logical screen width after rotation
-    int _height; ///< Logical screen height after rotation
-
-    static bool instanceExists; ///< Runtime flag to enforce single instance
+    /**
+     * @brief Polls the touchscreen controller for a valid touch event.
+     * @return True if a touch event is detected and within valid bounds.
+     */
+    bool touched();
+    
+    /**
+     * @brief Polls the touchscreen controller for a valid touch event.
+     * * This method performs a hardware read on the XPT2046 controller and maps the 
+     * coordinates to the display dimensions. It features state-aware exponential 
+     * smoothing:
+     * - If the touch is new (idle for >200ms), the filter resets to the raw 
+     * position to ensure an instant, jump-free response.
+     * - During continuous contact (holding/dragging), it applies a weighted 
+     * moving average to eliminate sensor jitter while maintaining responsiveness.
+     * * @return True if a valid touch event is detected with pressure above 
+     * TOUCH_PRESSURE_THRESHOLD, false otherwise.
+     */
+    int16_t touchX() { return (int16_t)_touchX; }
+    
+    /**
+     * @brief Returns the Y-coordinate of the last recorded valid touch event.
+     * @return Mapped Y position (0-239).
+     */
+    int16_t touchY() { return (int16_t)_touchY; }
+    
+    /**
+     * @brief Returns the Z-pressure value of the last recorded valid touch event.
+     * @return Pressure intensity.
+     */
+    int16_t touchZ() { return (int16_t)_touchZ; }
 };

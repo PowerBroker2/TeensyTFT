@@ -1,130 +1,175 @@
 #include "TeensyTFT.h"
 
-DMAMEM uint16_t TeensyTFT::fbA[TeensyTFT::PHYS_WIDTH*TeensyTFT::PHYS_HEIGHT];
-DMAMEM uint16_t TeensyTFT::fbB[TeensyTFT::PHYS_WIDTH*TeensyTFT::PHYS_HEIGHT];
-bool TeensyTFT::instanceExists = false;
-
-TeensyTFT::TeensyTFT(uint8_t cs, uint8_t dc, uint8_t rst)
-    : csPin(cs), dcPin(dc), rstPin(rst),
-      tft(cs, dc, rst),
-      front(fbA), back(fbB),
-      _width(PHYS_WIDTH), _height(PHYS_HEIGHT)
+TeensyTFT::TeensyTFT(uint8_t cs, uint8_t dc, uint8_t rst, uint8_t tcs, uint8_t tirq) 
+    : tft(cs, dc, 13, 11, 12, rst, tcs, tirq) 
 {
-    if (instanceExists) {
-        Serial.println("ERROR: Only one TeensyTFT instance allowed!");
-        while(true);
-    }
-    instanceExists = true;
-
-    memset(front, 0, sizeof(fbA));
-    memset(back , 0, sizeof(fbB));
+    clear(0x0000);
 }
 
-void TeensyTFT::begin(uint32_t spiSpeed, uint8_t rotation)
+void TeensyTFT::begin(uint32_t spi_clock)
 {
-    tft.begin(spiSpeed);
-    tft.setRotation(rotation);
+    tft.begin(spi_clock);
+    tft.setRotation(1); 
+    tft.setVSyncSpacing(0); 
 
-    // Update logical width and height based on rotation
-    if (rotation & 1) { // rotations 1 or 3 -> landscape
-        _width  = PHYS_WIDTH;
-        _height = PHYS_HEIGHT;
-    } else {           // rotations 0 or 2 -> portrait
-        _width  = PHYS_HEIGHT;
-        _height = PHYS_WIDTH;
-    }
-
-    tft.setFrameBuffer(front);
-    tft.useFrameBuffer(true);
-
-    tft.updateScreen();
+    tft.update(_frameBuffer, true); 
 }
 
-void TeensyTFT::clear(uint16_t color)
-{
-    for(int i=0;i<PHYS_WIDTH*PHYS_HEIGHT;i++) back[i] = color;
-}
-
-void TeensyTFT::pixel(int x,int y,uint16_t color)
-{
-    if((x < 0) || (x >= _width) || (y < 0) || (y >= _height))
-        return;
-    
-    back[(y * PHYS_WIDTH) + x] = color; // always use physical stride
-}
-
-void TeensyTFT::fillRegion(int x,
-                           int y,
-                           int w,
-                           int h,
-                           const uint16_t* buf)
-{
-    if(!buf)
-        return;
-    
-    for(int row = 0; row < h; row++)
+void TeensyTFT::clear(uint16_t color) {
+    for (int i = 0; i < (_width * _height); i++)
     {
-        int destY = y + row;
-
-        if((destY < 0) || (destY >= _height))
-            continue;
-
-        memcpy(back + (destY * PHYS_WIDTH) + x,
-               buf + (row * w),
-               w * sizeof(uint16_t));
+        _frameBuffer[i] = color;
     }
 }
 
-void TeensyTFT::fillRegion(int x,
-                           int y,
-                           int w,
-                           int h,
-                           const uint16_t* buf,
-                           const bool*     mask)
+void TeensyTFT::drawPixel(int16_t x, int16_t y, uint16_t color)
 {
-    if(!buf)
+    if (_outOfBounds(x, y))
+        return;
+
+    _frameBuffer[x + (_width * y)] = color;
+}
+
+void TeensyTFT::drawHLine(int16_t x, int16_t y, int16_t w, uint16_t color)
+{
+    if (y < 0 || y >= _height || x >= _width)
         return;
     
-    for(int row = 0; row < h; row++)
+    if (x < 0)
     {
-        int destY = y + row;
+        w += x;
+        x = 0;
+    }
 
-        if (destY < 0)
-            continue;
-        
-        if (destY >= _height)
-            return;
-        
-        for(int col = 0; col < w; col++)
+    if (x + w > _width)
+        w = _width - x;
+    
+    int index = x + (_width * y);
+
+    for (int16_t i = 0; i < w; i++)
+    {
+        _frameBuffer[index + i] = color;
+    }
+}
+
+void TeensyTFT::drawVLine(int16_t x, int16_t y, int16_t h, uint16_t color)
+{
+    if (x < 0 || x >= _width || y >= _height)
+        return;
+    
+    if (y < 0)
+    {
+        h += y;
+        y = 0;
+    }
+
+    if (y + h > _height)
+        h = _height - y;
+    
+    int index = x + (_width * y);
+
+    for (int16_t i = 0; i < h; i++)
+    {
+        _frameBuffer[index + (i * _width)] = color;
+    }
+}
+
+void TeensyTFT::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
+{
+    if (x >= _width || y >= _height)
+        return;
+    
+    if (x < 0)
+    {
+        w += x;
+        x = 0;
+    }
+
+    if (y < 0)
+    {
+        h += y;
+        y = 0;
+    }
+
+    if (x + w > _width)
+        w = _width - x;
+
+    if (y + h > _height)
+        h = _height - y;
+
+    for (int16_t row = y; row < (y + h); row++)
+    {
+        int index = x + (_width * row);
+
+        for (int16_t col = 0; col < w; col++)
         {
-            int destX = x + col;
-            int i     = row*w + col;
+            _frameBuffer[index + col] = color;
+        }
+    }
+}
 
-            if (destX < 0)
-                continue;
-            
-            if (destX >= _width)
-                break;
+void TeensyTFT::fillRegion(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* pixels, const uint8_t* mask)
+{
+    int idx = 0;
 
-            if (mask)
+    for (int row = y; row < (y + h); row++)
+    {
+        if (row >= 0 && row < _height)
+        {
+            for (int col = x; col < (x + w); col++)
             {
-                if (!mask[i])
-                    continue;
-            }
+                if (col >= 0 && col < _width)
+                {
+                    if (mask == nullptr || mask[idx] != 0)
+                    {
+                        _frameBuffer[col + (_width * row)] = pixels[idx];
+                    }
+                }
 
-            back[destY*_width + destX] = buf[i];
+                idx++;
+            }
         }
     }
 }
 
 void TeensyTFT::swap()
 {
-    while(tft.asyncUpdateActive());
+    tft.update(_frameBuffer);
+}
 
-    uint16_t* tmp = front;
-    front = back;
-    back = tmp;
+bool TeensyTFT::touched()
+{
+    if (tft.readTouch(_touchX, _touchY, _touchZ))
+    {
+        if (_touchZ > TOUCH_PRESSURE_THRESHOLD)
+        {
+            if (_touchIdleTimer > RESET_THRESHOLD_MS)
+            {
+                int16_t initialX = (_width - 1) - map(_touchY, TOUCH_CAL_MIN, TOUCH_CAL_MAX, 0, _width);
+                int16_t initialY = (_height - 1) - map(_touchX, TOUCH_CAL_MIN, TOUCH_CAL_MAX, 0, _height);
+                
+                _filteredX = initialX;
+                _filteredY = initialY;
+            }
 
-    tft.setFrameBuffer(front);
-    tft.updateScreenAsync();
+            int16_t rawX = _touchY;
+            int16_t rawY = _touchX;
+            
+            int16_t mappedX = (_width - 1) - map(rawX, TOUCH_CAL_MIN, TOUCH_CAL_MAX, 0, _width);
+            int16_t mappedY = (_height - 1) - map(rawY, TOUCH_CAL_MIN, TOUCH_CAL_MAX, 0, _height);
+            
+            // Apply Exponential Smoothing
+            _filteredX = (_filteredX * (1.0f - SMOOTHING_FACTOR)) + (mappedX * SMOOTHING_FACTOR);
+            _filteredY = (_filteredY * (1.0f - SMOOTHING_FACTOR)) + (mappedY * SMOOTHING_FACTOR);
+            
+            _touchX = constrain((int16_t)_filteredX, 0, _width - 1);
+            _touchY = constrain((int16_t)_filteredY, 0, _height - 1);
+            
+            _touchIdleTimer = 0;
+
+            return true;
+        }
+    }
+    
+    return false;
 }
