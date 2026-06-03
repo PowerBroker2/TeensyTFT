@@ -15,10 +15,12 @@ elapsedMillis _touchIdleTimer; // Tracks time since last touch
     float _filteredY = 0;
     
     static constexpr int16_t RESET_THRESHOLD_MS = 200; // Reset filter after 200ms
-    static constexpr float   SMOOTHING_FACTOR = 0.2f;
+    static constexpr float   SMOOTHING_FACTOR   = 0.6f;
 
-    static constexpr int16_t TOUCH_CAL_MIN            = 200;
-    static constexpr int16_t TOUCH_CAL_MAX            = 3800;
+    static constexpr int16_t TOUCH_X_CAL_MIN          = 500;
+    static constexpr int16_t TOUCH_X_CAL_MAX          = 3800;
+    static constexpr int16_t TOUCH_Y_CAL_MIN          = 200;
+    static constexpr int16_t TOUCH_Y_CAL_MAX          = 3800;
     static constexpr int16_t TOUCH_PRESSURE_THRESHOLD = 100;
 
     ILI9341_T4::ILI9341Driver tft;

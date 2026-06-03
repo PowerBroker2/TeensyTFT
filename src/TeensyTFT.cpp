@@ -145,8 +145,8 @@ bool TeensyTFT::touched()
         {
             if (_touchIdleTimer > RESET_THRESHOLD_MS)
             {
-                int16_t initialX = (_width - 1) - map(_touchY, TOUCH_CAL_MIN, TOUCH_CAL_MAX, 0, _width);
-                int16_t initialY = (_height - 1) - map(_touchX, TOUCH_CAL_MIN, TOUCH_CAL_MAX, 0, _height);
+                int16_t initialX = (_width  - 1) - map(_touchY, TOUCH_X_CAL_MIN, TOUCH_X_CAL_MAX, 0, _width);
+                int16_t initialY = (_height - 1) - map(_touchX, TOUCH_Y_CAL_MIN, TOUCH_Y_CAL_MAX, 0, _height);
                 
                 _filteredX = initialX;
                 _filteredY = initialY;
@@ -155,8 +155,8 @@ bool TeensyTFT::touched()
             int16_t rawX = _touchY;
             int16_t rawY = _touchX;
             
-            int16_t mappedX = (_width - 1) - map(rawX, TOUCH_CAL_MIN, TOUCH_CAL_MAX, 0, _width);
-            int16_t mappedY = (_height - 1) - map(rawY, TOUCH_CAL_MIN, TOUCH_CAL_MAX, 0, _height);
+            int16_t mappedX = (_width  - 1) - map(rawX, TOUCH_X_CAL_MIN, TOUCH_X_CAL_MAX, 0, _width);
+            int16_t mappedY = (_height - 1) - map(rawY, TOUCH_Y_CAL_MIN, TOUCH_Y_CAL_MAX, 0, _height);
             
             // Apply Exponential Smoothing
             _filteredX = (_filteredX * (1.0f - SMOOTHING_FACTOR)) + (mappedX * SMOOTHING_FACTOR);
