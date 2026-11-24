@@ -1,160 +1,126 @@
 #pragma once
 #include <Arduino.h>
-#include <SPI.h>
 #include <ILI9341_T4.h>
 
-/**
- * @class TeensyTFT
- * @brief Provides a high-performance TFT and Touchscreen interface for Teensy 4.1
- */
+/** Landscape RGB565 display and optional XPT2046 touch on Teensy 4.x. */
 class TeensyTFT
 {
+public:
+    static constexpr int16_t Width = 320;
+    static constexpr int16_t Height = 240;
+    static constexpr size_t PixelCount = size_t(Width) * Height;
+
+    struct TouchCalibration
+    {
+        uint16_t left, right, top, bottom;
+    };
+
+    struct AffineCalibration
+    {
+        // Screen X = xx * rawX + xy * rawY + xOffset, likewise for screen Y.
+        float xx, xy, xOffset;
+        float yx, yy, yOffset;
+    };
+
+    struct EdgeAccuracy
+    {
+        float rmsError;
+        float maxError;
+        float maxTapSeparation;
+        int16_t worstX, worstY;
+    };
+
+    // SPI uses SCK 13, MOSI 11, MISO 12. Use 255 for an unconnected optional pin.
+    TeensyTFT(uint8_t cs, uint8_t dc, uint8_t rst = 255, uint8_t tcs = 8, uint8_t tirq = 2);
+    ~TeensyTFT();
+
+    TeensyTFT(const TeensyTFT&) = delete;
+    TeensyTFT& operator=(const TeensyTFT&) = delete;
+
+    // Allocates a DMA framebuffer and initializes the display. Safe to call again.
+    // Returns false on allocation or driver initialization failure.
+    bool begin(uint32_t spi_clock = ILI9341_T4_DEFAULT_SPICLOCK);
+
+    void clear(uint16_t color = 0);
+    void drawPixel(int16_t x, int16_t y, uint16_t color);
+    void drawHLine(int16_t x, int16_t y, int16_t w, uint16_t color);
+    void drawVLine(int16_t x, int16_t y, int16_t h, uint16_t color);
+    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
+
+    // Source and optional mask are tightly packed, row-major arrays of w * h elements.
+    // A true mask element copies the corresponding pixel.
+    void fillRegion(int16_t x, int16_t y, int16_t w, int16_t h,
+                    const uint16_t* pixels, const bool* mask = nullptr);
+
+    // Submit the retained drawing buffer. Drawing may resume immediately.
+    void swap();
+
+    // Submit a packed full-screen pixmap without copying it into the drawing buffer.
+    // The input may be reused immediately. A later swap() displays the drawing buffer.
+    void present(const uint16_t* pixels);
+
+    // Wait for outstanding display DMA before using the shared SPI bus.
+    void waitForDisplay();
+
+    int16_t width() const { return Width; }
+    int16_t height() const { return Height; }
+
+    // Raw values corresponding to the left, right, top and bottom screen edges.
+    // Raw Y drives screen X and raw X drives screen Y in landscape orientation.
+    // Either endpoint order is valid. Equal endpoints are rejected.
+    bool setTouchCalibration(uint16_t left, uint16_t right, uint16_t top, uint16_t bottom);
+    // Returns the endpoint calibration or a centerline approximation of the affine map.
+    TouchCalibration touchCalibration() const { return _touchCalibration; }
+    bool setTouchCalibration(const AffineCalibration& calibration);
+    bool touchCalibration(AffineCalibration& calibration) const;
+
+    // Show nine crosshairs and wait for stylus presses. Zero timeout waits indefinitely.
+    // Restores the displayed frame and keeps the current calibration on failure.
+    bool calibrateTouch(uint32_t timeoutMs = 45000);
+
+    // Measure two taps at each of eight independent edge targets, in pixels.
+    // Leaves calibration unchanged. Result is populated only on success.
+    bool checkTouchEdgeAccuracy(EdgeAccuracy& result, uint32_t timeoutMs = 45000);
+
+    // Raw pressure thresholds. Release must be positive and below press.
+    bool setTouchPressureThresholds(uint16_t press, uint16_t release);
+
+    // Poll for touch. Calls between samples return the current contact state.
+    // Accessors retain the last valid sample after release.
+    bool touched();
+    int16_t touchX() const { return _touchX; }
+    int16_t touchY() const { return _touchY; }
+    int16_t touchZ() const { return _touchZ; }
+
 private:
-elapsedMillis _touchIdleTimer; // Tracks time since last touch
+    struct TouchPosition { int x, y; };
+    bool sampleTouchTargets(const TouchPosition* targets, TouchPosition* readings,
+                            size_t count, unsigned tapsPerTarget, uint32_t timeoutMs);
+    void mapTouchPosition(int rawX, int rawY, float& x, float& y) const;
+
+    ILI9341_T4::ILI9341Driver _driver;
+    ILI9341_T4::DiffBuffStatic<6000> _diff1;
+    ILI9341_T4::DiffBuffStatic<6000> _diff2;
+    uint16_t* _dmaBuffer = nullptr;
+    bool _ready = false;
+    const bool _touchEnabled;
+
+    elapsedMillis _touchSampleTimer;
+    bool _touchActive = false;
+    uint8_t _touchStreak = 0;
+    uint8_t _touchHistoryIndex = 0;
+    uint16_t _touchPressThreshold = 400;
+    uint16_t _touchReleaseThreshold = 250;
+    int16_t _touchHistoryX[3]{};
+    int16_t _touchHistoryY[3]{};
     float _filteredX = 0;
     float _filteredY = 0;
-    
-    static constexpr int16_t RESET_THRESHOLD_MS = 200; // Reset filter after 200ms
-    static constexpr float   SMOOTHING_FACTOR   = 0.6f;
+    int16_t _touchX = 0;
+    int16_t _touchY = 0;
+    int16_t _touchZ = 0;
+    TouchCalibration _touchCalibration{3800, 500, 3800, 200};
+    AffineCalibration _affineCalibration{};
+    bool _hasAffineCalibration = false;
 
-    static constexpr int16_t TOUCH_X_CAL_MIN          = 500;
-    static constexpr int16_t TOUCH_X_CAL_MAX          = 3800;
-    static constexpr int16_t TOUCH_Y_CAL_MIN          = 200;
-    static constexpr int16_t TOUCH_Y_CAL_MAX          = 3800;
-    static constexpr int16_t TOUCH_PRESSURE_THRESHOLD = 100;
-
-    ILI9341_T4::ILI9341Driver tft;
-
-    static const int16_t _width  = 320;
-    static const int16_t _height = 240;
-
-    int _touchX = 0;
-    int _touchY = 0;
-    int _touchZ = 0;
-
-    uint16_t _frameBuffer[_width * _height];
-
-    inline bool _outOfBounds(int16_t x, int16_t y)
-    {
-        return (x < 0 || x >= _width || y < 0 || y >= _height);
-    }
-
-public:
-    /**
-     * @brief Constructs a new TeensyTFT object.
-     * @param cs Physical Chip Select pin for the TFT display.
-     * @param dc Physical Data/Command pin for the TFT display.
-     * @param rst Physical Reset pin for the TFT display (defaults to 255).
-     * @param tcs Physical Chip Select pin for the XPT2046 touch controller (defaults to 8).
-     * @param tirq Physical Interrupt pin for the XPT2046 touch controller (defaults to 2).
-     */
-    TeensyTFT(uint8_t cs, uint8_t dc, uint8_t rst = 255, uint8_t tcs = 8, uint8_t tirq = 2);
-
-    /**
-     * @brief Initializes the driver, configures SPI, and sets up display orientation.
-     * @param spi_clock Target SPI bus speed in Hertz (defaults to 80MHz).
-     */
-    void begin(uint32_t spi_clock = 80000000);
-    
-    /**
-     * @brief Fills the internal frame buffer with a solid color.
-     * @param color 16-bit RGB565 color value (defaults to 0x0000/Black).
-     */
-    void clear(uint16_t color = 0x0000);
-    
-    /**
-     * @brief Pushes the contents of the internal frame buffer to the physical display via DMA.
-     */
-    void swap();
-    
-    /**
-     * @brief Draws an individual pixel at the specified coordinates.
-     * @param x Horizontal screen position.
-     * @param y Vertical screen position.
-     * @param color 16-bit RGB565 color value.
-     */
-    void drawPixel(int16_t x, int16_t y, uint16_t color);
-    
-    /**
-     * @brief Draws a horizontal line of a specified width.
-     * @param x Starting horizontal position.
-     * @param y Vertical position.
-     * @param w Width of the line in pixels.
-     * @param color 16-bit RGB565 color value.
-     */
-    void drawHLine(int16_t x, int16_t y, int16_t w, uint16_t color);
-    
-    /**
-     * @brief Draws a vertical line of a specified height.
-     * @param x Horizontal position.
-     * @param y Starting vertical position.
-     * @param h Height of the line in pixels.
-     * @param color 16-bit RGB565 color value.
-     */
-    void drawVLine(int16_t x, int16_t y, int16_t h, uint16_t color);
-    
-    /**
-     * @brief Draws a filled rectangle at the specified coordinates and dimensions.
-     * @param x Starting horizontal position.
-     * @param y Starting vertical position.
-     * @param w Width of the rectangle.
-     * @param h Height of the rectangle.
-     * @param color 16-bit RGB565 color value.
-     */
-    void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color);
-    
-    /**
-     * @brief Copies an array of pixel data into a defined rectangular region.
-     * @param x Starting horizontal position.
-     * @param y Starting vertical position.
-     * @param w Width of the region.
-     * @param h Height of the region.
-     * @param pixels Pointer to the array of 16-bit RGB565 color data.
-     * @param mask Pointer to an optional transparency mask of which pixels to draw.
-     */
-    void fillRegion(int16_t x, int16_t y, int16_t w, int16_t h, const uint16_t* pixels, const bool* mask = nullptr);
-
-    /**
-     * @brief Returns the width of the display in pixels.
-     * @return Screen width (int16_t).
-     */
-    int16_t width()  { return _width; }
-    
-    /**
-     * @brief Returns the height of the display in pixels.
-     * @return Screen height (int16_t).
-     */
-    int16_t height() { return _height; }
-
-    /**
-     * @brief Polls the touchscreen controller for a valid touch event.
-     * @return True if a touch event is detected and within valid bounds.
-     */
-    bool touched();
-    
-    /**
-     * @brief Polls the touchscreen controller for a valid touch event.
-     * * This method performs a hardware read on the XPT2046 controller and maps the 
-     * coordinates to the display dimensions. It features state-aware exponential 
-     * smoothing:
-     * - If the touch is new (idle for >200ms), the filter resets to the raw 
-     * position to ensure an instant, jump-free response.
-     * - During continuous contact (holding/dragging), it applies a weighted 
-     * moving average to eliminate sensor jitter while maintaining responsiveness.
-     * * @return True if a valid touch event is detected with pressure above 
-     * TOUCH_PRESSURE_THRESHOLD, false otherwise.
-     */
-    int16_t touchX() { return (int16_t)_touchX; }
-    
-    /**
-     * @brief Returns the Y-coordinate of the last recorded valid touch event.
-     * @return Mapped Y position (0-239).
-     */
-    int16_t touchY() { return (int16_t)_touchY; }
-    
-    /**
-     * @brief Returns the Z-pressure value of the last recorded valid touch event.
-     * @return Pressure intensity.
-     */
-    int16_t touchZ() { return (int16_t)_touchZ; }
+    alignas(4) uint16_t _frameBuffer[PixelCount]{};
 };
